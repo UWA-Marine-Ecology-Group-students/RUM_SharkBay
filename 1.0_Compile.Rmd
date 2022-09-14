@@ -1,0 +1,119 @@
+# Set Up
+```{r setup, include = FALSE}
+# librarys
+library(tidyverse)
+library(dplyr)
+library(lubridate)
+library(chron)
+library(lunar)
+library(ggplot2)
+```
+
+# Data Prep
+After downloading the data from Survey123, you end up 5 individual .csv docs; 
+
+  - dat (survey_0), contains interview, demographic and fishing avidity information
+  - accom (repeat_accomm_1), contains coordinates of accommodation 
+  (ParentGlobalID == survey_0$GloablID)
+    - act (repeat_Activity_4), conatins all the attributed of the activity 
+    (ParentGlobalID == survey_0$GlobalID)
+  - actTrace (repeat_geotrace_2), contains IDs for geotrace, no coordinates? but if you doewnload as         shapefile you can load the geometry into Q - there must be a way to extract the geometry? 
+    (ParentGlobalID == repeat_Activity_4$GlobalID)
+  - actPoint (repeat_ActivityLocation_3), contains coordinates for activity 
+    (ParentGlobalID == repeat_Activity_4$GlobalID)
+
+1. Read in documents, including `na = c("", " ")` to make all empty cells consistent
+
+```{r  read data}
+# Note this data has been manually compiled across 2 feature classes after updating the data
+dem <- read_csv("./data/survey_0.csv", na = c("", " ", "na", "NA", "-"))
+accom <- read_csv("./data/repeat_accom_1.csv", na = c("", " ", "na", "NA", "-"))
+act <- read_csv("./data/repeat_Activity_4.csv", na = c("", " ", "na", "NA", "-"))
+actTrace <- read_csv("./data/repeat_geotrace_2.csv", na = c("", " ", "na", "NA", "-"))
+actPoint <- read_csv("./data/repeat_ActivityLocation_3.csv", na = c("", " ", "na", "NA", "-"))
+```
+
+Do not expect any of your data sheets to have the same number of observations.
+
+For each individual dataset: 
+  2. Check no missing GlobalIDs in Meta or GUIDs in Use or Avidity data
+  3. Give ID variables intuitive names
+  5 Add activity type for Use surveys
+
+```{r  data prep}
+table(is.na(dem$GlobalID)) # all false
+
+dem %<>% # demographic data
+  rename(PersonID = ObjectID,
+         surveyLong = x,
+         surveyLat = y) %>%
+  dplyr::select(-c(Creator, Editor, EditDate))
+
+table(is.na(accom$ParentGlobalID)) # all false
+
+accom %<>% # accomodation data and geometry
+  rename(accomGlobalID = GlobalID,
+         accomObjectID = ObjectID,
+         accomLong = x,
+         accomLat = y) %>%
+  dplyr::select(-c(Creator, Editor, EditDate, CreationDate))
+
+table(is.na(act$ParentGlobalID)) # all false
+table(is.na(act$GlobalID)) # all false
+
+act %<>% # activity data
+  rename(actGlobalID = GlobalID,
+         actObjectID = ObjectID,
+         actPGlobalID = ParentGlobalID) %>%
+  dplyr::select(-c(Creator, Editor, EditDate, CreationDate))
+
+table(is.na(actTrace$GlobalID)) # all false
+
+actTrace %<>% # geotrace data
+  rename(traceGlobalID = GlobalID,
+         traceObjectID = ObjectID,
+         tracePGlobalID = ParentGlobalID) %>%
+  dplyr::select(-c(Creator, Editor, EditDate, CreationDate))
+
+table(is.na(actPoint$GlobalID)) # all false
+
+actPoint %<>% # point data
+  rename(pointGlobalID = GlobalID,
+         pointObjectID = ObjectID,
+         pointPGlobalID = ParentGlobalID,
+         actLong = x,
+         actLat = y) %>%
+  dplyr::select(-c(Creator, Editor, EditDate, CreationDate))
+```
+
+Join the four data sets, linking them by the Meta GlobalID (primary key) and GUID (foreign key) of the other data sheets (ie. every Meta GlobalID should match the GUID in the other data sheets). 
+
+meta (GlobalID) -> ex/nex/avid GUID
+
+Use a `full_join` to connect individual data sheets. Using a inner join will remove refusals which are needed for response rate calculations. 
+
+```{r  join}
+dat <- full_join(dem, accom, by = c("GlobalID" = "ParentGlobalID"), keep = T) # joining dat to accom
+
+# check
+length(dat) == (length(dem) + length(accom)) # true
+
+actdat <- full_join(act, actTrace, by = c("actGlobalID" = "tracePGlobalID"), keep = T) # joining act to actTrace
+
+# check
+length(actdat) == (length(act) + length(actTrace)) # true
+
+actdat <- full_join(actdat, actPoint, by = c("actGlobalID" = "pointPGlobalID"), keep = T) # joining act to actPoint
+
+# check
+length(actdat) == (length(act) + length(actTrace) + length(actPoint)) # true
+
+dat <- full_join(dat, actdat, by = c("GlobalID" = "actPGlobalID"), keep = T) # join
+
+# check
+length(dat) == (length(dem) + length(accom) +length(act) + length(actTrace) + length(actPoint)) # true
+```
+
+```{r save}
+write.csv(dat, './data/RAW.csv')  # full raw un-cleaned dataset
+```
